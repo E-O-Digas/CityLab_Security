@@ -213,3 +213,6 @@ __marimo__/
 *.txt
 *.yaml
 *.pt
+
+# Folders
+citylab_security_venv_windows/
