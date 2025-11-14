@@ -3,193 +3,176 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Teste WebSocket CityLab</title>
+    <title>Teste de Reconhecimento via WebSocket</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background-color: #f0f0f0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
+            background-color: #f0f2f5;
             margin: 0;
-        }
-        h1 {
             color: #333;
         }
-        #container {
+        
+        h1 {
+            font-weight: 600;
+            color: #1c1e21;
+        }
+
+        #video-container {
             position: relative;
             width: 640px;
             height: 480px;
-            border: 2px solid #333;
+            background-color: #000;
             border-radius: 8px;
             overflow: hidden;
-            background: #000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
+
         video {
+            display: block;
             width: 100%;
             height: 100%;
-            display: block;
+            transform: scaleX(-1);
+            filter: brightness(175%);
         }
-        canvas {
+
+        #overlay-canvas {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
+            transform: scaleX(-1);
         }
+
         #status {
-            margin-top: 15px;
+            margin-top: 16px;
             font-size: 1.1em;
-            padding: 10px;
-            background: #fff;
-            border-radius: 5px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            max-width: 600px;
-            text-align: center;
+            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 6px;
+            background-color: #e4e6eb;
         }
-        .connecting { color: #ffa500; }
-        .connected { color: #008000; }
-        .error { color: #ff0000; }
     </style>
 </head>
 <body>
     <h1>Teste de Reconhecimento via WebSocket</h1>
-    <div id="container">
+    <div id="video-container">
         <video id="video" autoplay playsinline muted></video>
-        <canvas id="overlayCanvas"></canvas>
+        <canvas id="overlay-canvas"></canvas>
     </div>
-    <div id="status" class="connecting">Conectando ao servidor...</div>
-    <!-- Canvas oculto para processamento -->
-    <canvas id="processCanvas" style="display:none;"></canvas>
+    <div id="status">Conectando ao servidor...</div>
+
+    <canvas id="process-canvas" style="display:none;"></canvas>
 
     <script>
         const video = document.getElementById('video');
-        const overlayCanvas = document.getElementById('overlayCanvas');
-        const processCanvas = document.getElementById('processCanvas'); // Canvas oculto
+        const processCanvas = document.getElementById('process-canvas');
+        const processCtx = processCanvas.getContext('2d');
         const statusDiv = document.getElementById('status');
-        const ctxOverlay = overlayCanvas.getContext('2d');
-        const ctxProcess = processCanvas.getContext('2d');
+        
+        const WS_URL = "ws://127.0.0.1:8000/ws";
+        const VIDEO_WIDTH = 640;
+        const VIDEO_HEIGHT = 480;
 
-        // --- MUDANÇA: Troquei localhost por 127.0.0.1 ---
-        // Isso costuma ser mais confiável para conexões locais.
-        const WS_URL = "ws://127.0.0.1:8000/ws"; 
+        let isProcessing = false;
         let ws;
-        let stream;
 
-        // 1. Inicia a Webcam
-        async function setupWebcam() {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 640, height: 480 },
-                    audio: false 
-                });
-                video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    // Ajusta os canvases para o tamanho real do vídeo
-                    overlayCanvas.width = video.videoWidth;
-                    overlayCanvas.height = video.videoHeight;
-                    processCanvas.width = video.videoWidth;
-                    processCanvas.height = video.videoHeight;
-                    connectWebSocket(); // Conecta ao WS *depois* que a câmera estiver pronta
-                };
-            } catch (err) {
-                console.error("Erro ao acessar a webcam: ", err);
-                statusDiv.textContent = "Erro ao acessar a webcam.";
-                statusDiv.className = "error";
-            }
-        }
-
-        // 2. Conecta ao WebSocket
-        function connectWebSocket() {
-            ws = new WebSocket(WS_URL);
-            let connectionError = false; // Flag para evitar mensagens duplicadas
-
-            ws.onopen = () => {
-                console.log("Conectado ao servidor WebSocket.");
-                statusDiv.textContent = "Conectado. Enviando frames...";
-                statusDiv.className = "connected";
-                // Inicia o loop de envio de frames
-                setInterval(sendFrame, 100); // Envia ~10 frames por segundo
-            };
-
-            ws.onmessage = (event) => {
-                // 4. Recebe os resultados e desenha
-                const results = JSON.parse(event.data);
-                drawResults(results);
-            };
-
-            ws.onclose = () => {
-                console.log("Desconectado do servidor WebSocket.");
-                if (!connectionError) { // Só mostra se não foi um erro de conexão inicial
-                    statusDiv.textContent = "Desconectado. Tentando reconectar...";
-                }
-                statusDiv.className = "error";
-                setTimeout(connectWebSocket, 3000); // Tenta reconectar a cada 3s
-            };
-
-            ws.onerror = (err) => {
-                connectionError = true;
-                console.error("Erro no WebSocket: ", err);
-                // --- MUDANÇA: Mensagem de erro mais clara ---
-                statusDiv.textContent = `Erro de conexão. O servidor Python está rodando em ${WS_URL}? Verifique o terminal.`;
-                statusDiv.className = "error";
-            };
-        }
-
-        // 3. Envia o frame para o servidor
-        function sendFrame() {
-            if (ws.readyState === WebSocket.OPEN && video.readyState >= 3) {
-                // Desenha o frame atual do vídeo no canvas oculto
-                ctxProcess.drawImage(video, 0, 0, processCanvas.width, processCanvas.height);
-                
-                // Converte para Base64 JPEG (comprime a imagem)
-                // 0.7 = 70% de qualidade. Ajuste conforme necessário.
-                const dataUrl = processCanvas.toDataURL('image/jpeg', 0.7);
-                
-                // Envia o Base64 para o Python
-                ws.send(dataUrl);
-            }
-        }
-
-        // 5. Desenha os resultados no canvas de overlay
         function drawResults(results) {
-            // Limpa o canvas
-            ctxOverlay.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            overlayCtx.clearRect(0, 0, VIDEO_WIDTH, VIDEO_HEIGHT); 
 
-            // Desenha rostos
             if (results.faces) {
                 results.faces.forEach(face => {
                     const [x1, y1, x2, y2] = face.bbox;
                     const name = face.name;
-                    const color = (name === "NAO ALUNO") ? "#FF0000" : "#00FF00"; // Vermelho ou Verde
+                    const color = (name === "NAO ALUNO") ? "rgba(255, 0, 0, 0.9)" : "rgba(0, 255, 0, 0.7)";
                     
-                    ctxOverlay.strokeStyle = color;
-                    ctxOverlay.lineWidth = 2;
-                    ctxOverlay.strokeRect(x1, y1, x2 - x1, y2 - y1);
-                    
-                    ctxOverlay.fillStyle = color;
-                    ctxOverlay.font = "16px Arial";
-                    ctxOverlay.fillText(name, x1, y1 - 5);
-                });
-            }
+                    // Desenha o retângulo (que será espelhado pelo CSS)
+                    overlayCtx.strokeStyle = color;
+                    overlayCtx.lineWidth = 3;
+                    overlayCtx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
-            // Desenha pessoas (YOLO)
-            if (results.persons) {
-                results.persons.forEach(person => {
-                    const [x1, y1, x2, y2] = person.bbox;
+                    overlayCtx.save();
+                    const rectWidth = x2 - x1;
+                    overlayCtx.translate(x1 + rectWidth, y1);
+                    overlayCtx.scale(-1, 1); 
+                    overlayCtx.fillStyle = color;
+                    overlayCtx.font = "18px Arial";
+                    overlayCtx.textAlign = 'right';
                     
-                    ctxOverlay.strokeStyle = "#00FFFF"; // Ciano
-                    ctxOverlay.lineWidth = 1;
-                    ctxOverlay.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                    overlayCtx.fillText(name, -5, -10); 
+                    
+                    overlayCtx.restore();
                 });
             }
         }
 
-        // Inicia tudo
-        setupWebcam();
+        function sendFrameLoop() {
+            if (isProcessing) {
+                requestAnimationFrame(sendFrameLoop);
+                return;
+            }
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+            isProcessing = true;
+            processCtx.drawImage(video, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+            const data = processCanvas.toDataURL('image/jpeg', 0.95);
+            ws.send(data);
+            requestAnimationFrame(sendFrameLoop);
+        }
 
+        async function startWebcamAndConnect() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: VIDEO_WIDTH, height: VIDEO_HEIGHT }
+                });
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    processCanvas.width = video.videoWidth;
+                    processCanvas.height = video.videoHeight;
+
+                    ws = new WebSocket(WS_URL);
+
+                    ws.onopen = () => {
+                        statusDiv.textContent = "Conectado. Enviando frames...";
+                        statusDiv.style.color = "green";
+                        isProcessing = false;
+                        sendFrameLoop();
+                    };
+
+                    ws.onmessage = (event) => {
+                        const results = JSON.parse(event.data);
+                        drawResults(results);
+                        isProcessing = false; 
+                    };
+
+                    ws.onerror = (error) => {
+                        console.error("Erro no WebSocket:", error);
+                        statusDiv.textContent = `Erro de conexão. O servidor Python está rodando em ${WS_URL}? Verifique o terminal.`;
+                        statusDiv.style.color = "red";
+                    };
+
+                    ws.onclose = () => {
+                        console.log("WebSocket fechado.");
+                        statusDiv.textContent = "Desconectado do servidor.";
+                        statusDiv.style.color = "red";
+                    };
+                };
+
+            } catch (err) {
+                console.error("Erro ao acessar a webcam:", err);
+                statusDiv.textContent = "Erro ao acessar a webcam. Verifique as permissões.";
+                statusDiv.style.color = "red";
+            }
+        }
+        
+        startWebcamAndConnect();
     </script>
 </body>
 </html>
